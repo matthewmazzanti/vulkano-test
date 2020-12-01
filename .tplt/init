@@ -2,7 +2,7 @@
 tplt query \
     -d NAME="$(git config --get user.name)" \
     -d EMAIL="$(git config --get user.email)" \
-    -q DESCRIPTION="Project description"
+    -q DESCRIPTION="Project description" \
     -q PROJECT_NAME="Project Name"
 
 tplt replace

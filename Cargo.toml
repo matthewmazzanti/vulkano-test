@@ -1,7 +1,7 @@
 [package]
-name = "&&PROJECT_NAME&&"
+name = "vulkano-test"
 version = "0.1.0"
-authors = ["&&NAME&& <&&EMAIL&&>"]
+authors = ["Matthew Mazzanti <matthew.mazzanti@gmail.com>"]
 edition = "2018"
 
 [dependencies]

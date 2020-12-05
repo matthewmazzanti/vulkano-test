@@ -5,3 +5,8 @@ authors = ["Matthew Mazzanti <matthew.mazzanti@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+vulkano = "0.19"
+vulkano-shaders = "0.18"
+vulkano-win = "0.19"
+winit = "0.22"
+image = "0.23"

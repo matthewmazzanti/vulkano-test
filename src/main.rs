@@ -18,6 +18,14 @@ enum Rot {
     No,
 }
 
+struct Asteroid {
+    x: f32,
+    y: f32,
+    vel_x: f32,
+    vel_y: f32,
+    angle: f32,
+}
+
 struct State {
     x: f32,
     y: f32,
@@ -26,21 +34,28 @@ struct State {
     accel: bool,
     angle: f32,
     rot: Rot,
+    asteroids: Vec<Asteroid>,
 }
 
-fn render(gameState: &State) -> Vec<InstanceData> {
-    vec![
+fn render(st: &State) -> Vec<Vec<InstanceData>> {
+    let ships = vec![
         InstanceData {
-            pos_offset: [gameState.x, gameState.y],
-            angle: gameState.angle,
-            scale: 0.1,
+            pos_offset: [st.x, st.y],
+            angle: st.angle,
+            scale: 0.05,
         },
-        InstanceData {
-            pos_offset: [gameState.x + 0.1, gameState.y + 0.1],
-            angle: gameState.angle,
+    ];
+
+    let mut asteroids = Vec::new();
+    for asteroid in st.asteroids.iter() {
+        asteroids.push(InstanceData {
+            pos_offset: [asteroid.x, asteroid.y],
+            angle: asteroid.angle,
             scale: 0.1,
-        },
-    ]
+        });
+    }
+
+    vec![ships, asteroids]
 }
 
 fn update(st: &mut State) {
@@ -59,7 +74,7 @@ fn update(st: &mut State) {
         st.vel_y += delta_vel_y;
     }
 
-    println!("angle: {}, vel_x: {}, vel_y: {}", angle, st.vel_x, st.vel_y);
+    // println!("angle: {}, vel_x: {}, vel_y: {}", angle, st.vel_x, st.vel_y);
 
     st.x -= st.vel_x;
     st.y -= st.vel_y;
@@ -75,20 +90,41 @@ fn update(st: &mut State) {
     } else if st.y < -1.0 {
         st.y += 2.0;
     }
+
+    for asteroid in st.asteroids.iter_mut() {
+        // asteroid.angle += 3.0;
+        asteroid.x += asteroid.vel_x;
+        asteroid.y += asteroid.vel_y;
+
+        if asteroid.x > 1.0 {
+            asteroid.x -= 2.0;
+        } else if asteroid.x < -1.0 {
+            asteroid.x += 2.0;
+        }
+
+        if asteroid.y > 1.0 {
+            asteroid.y -= 2.0;
+        } else if asteroid.y < -1.0 {
+            asteroid.y += 2.0;
+        }
+    }
 }
 
 fn main() {
     let event_loop = EventLoop::new();
     let mut renderer = Renderer::new(&event_loop);
 
-    let mut gameState = State {
-        x: 0.0,
-        y: 0.0,
+    let mut game_state = State {
+        x: 0.5,
+        y: 0.5,
         vel_x: 0.0,
         vel_y: 0.0,
         angle: 0.0,
         accel: false,
         rot: Rot::No,
+        asteroids: vec![
+            Asteroid { x: 0.0, y: 0.0, vel_x: 0.0, vel_y: 0.0, angle: 0.0 },
+        ],
     };
 
     event_loop.run(move |event, _, control_flow| {
@@ -106,16 +142,16 @@ fn main() {
             } => {
                 if state == Keyvent::Pressed {
                     match key {
-                        Key::A => gameState.rot = Rot::Left,
-                        Key::F => gameState.rot = Rot::Right,
-                        Key::D => gameState.accel = true,
+                        Key::A => game_state.rot = Rot::Left,
+                        Key::F => game_state.rot = Rot::Right,
+                        Key::D => game_state.accel = true,
                         _ => (),
                     }
                 } else {
                     match key {
-                        Key::A => gameState.rot = Rot::No,
-                        Key::F => gameState.rot = Rot::No,
-                        Key::D => gameState.accel = false,
+                        Key::A => game_state.rot = Rot::No,
+                        Key::F => game_state.rot = Rot::No,
+                        Key::D => game_state.accel = false,
                         _ => (),
                     }
                 }
@@ -127,8 +163,8 @@ fn main() {
                 renderer.recreate_swapchain = true;
             }
             Event::RedrawEventsCleared => {
-                update(&mut gameState);
-                renderer.redraw(render(&gameState));
+                update(&mut game_state);
+                renderer.redraw(render(&game_state));
             }
             _ => (),
         }

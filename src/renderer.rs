@@ -9,12 +9,13 @@ use vulkano::{
         RenderPassAbstract,
         Subpass
     },
-    image::{ ImageUsage, SwapchainImage },
+    format::{ Format, ClearValue },
+    image::{ ImageUsage, SwapchainImage, AttachmentImage },
     instance::{ Instance, PhysicalDevice },
     pipeline::{
         viewport::Viewport,
         GraphicsPipeline,
-        vertex::OneVertexOneInstanceDefinition,
+        vertex::SingleBufferDefinition,
     },
     swapchain,
     swapchain::{
@@ -40,6 +41,9 @@ use winit::{
 use std::sync::Arc;
 
 
+mod mesh;
+use mesh::{ship_mesh, asteroid_mesh};
+
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -62,48 +66,56 @@ fn mk_shaders(device: Arc<Device>) -> (vs::Shader, fs::Shader) {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct Vertex {
-    pos: [f32; 2],
-}
-
-vulkano::impl_vertex!(Vertex, pos);
-
-fn mk_vert_buf(device: Arc<Device>) -> Arc<CpuBuf<[Vertex]>> {
-    let vertices = [
-        Vertex { pos: [ 0.0, -0.5] },
-        Vertex { pos: [ 0.0,  0.0] },
-        Vertex { pos: [-0.5,  0.5] },
-        Vertex { pos: [ 0.0, -0.5] },
-        Vertex { pos: [ 0.0,  0.0] },
-        Vertex { pos: [ 0.5,  0.5] },
-    ].iter().cloned();
-
-    CpuBuf::from_iter(
-        device,
-        BufferUsage::all(),
-        false,
-        vertices
-    ).unwrap()
-}
-
-
-#[derive(Default, Debug, Clone)]
 pub struct InstanceData {
     pub pos_offset: [f32; 2],
     pub angle: f32,
     pub scale: f32,
 }
 
-vulkano::impl_vertex!(InstanceData, pos_offset, angle, scale);
+#[derive(Default, Debug, Clone)]
+pub struct InstVert {
+    pos: [f32; 2],
+    pos_offset: [f32; 2],
+    angle: f32,
+    scale: f32,
+}
 
-pub fn mk_inst_buf(device: Arc<Device>, data: Vec<InstanceData>) ->
-    Arc<CpuBuf<[InstanceData]>>
+vulkano::impl_vertex!(InstVert, pos, pos_offset, angle, scale);
+
+pub fn mk_inst_buf(device: Arc<Device>, data: Vec<Vec<InstanceData>>) ->
+    Arc<CpuBuf<[InstVert]>>
+
 {
+    let mut vec = Vec::new();
+
+    for inst in data[0].iter() {
+        for vert in ship_mesh().iter() {
+            vec.push(InstVert {
+                pos: vert.pos,
+                pos_offset: inst.pos_offset,
+                angle: inst.angle,
+                scale: inst.scale,
+            });
+        }
+    }
+
+    let asteroid = asteroid_mesh();
+    for inst in data[1].iter() {
+        for vert in asteroid.iter() {
+            vec.push(InstVert {
+                pos: vert.pos,
+                pos_offset: inst.pos_offset,
+                angle: inst.angle,
+                scale: inst.scale,
+            });
+        }
+    }
+
     CpuBuf::from_iter(
         device,
         BufferUsage::all(),
         false,
-        data.iter().cloned(),
+        vec.into_iter(),
     ).unwrap()
 }
 
@@ -116,7 +128,6 @@ pub struct Renderer {
     pub swapchain: Arc<Swapchain<Window>>,
     pub images: Vec<Arc<SwapchainImage<Window>>>,
     pub render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
-    pub vert_buf: Arc<CpuBuf<[Vertex]>>,
     pub vs: vs::Shader,
     pub fs: fs::Shader,
     pub pipeline: MyPipeline,
@@ -164,8 +175,6 @@ impl Renderer {
         // stencil information will be written.
         let render_pass = mk_render_pass(device.clone(), swapchain.clone());
 
-        let vert_buf = mk_vert_buf(device.clone());
-
         let (vs, fs) = mk_shaders(device.clone());
 
         // Before we draw we have to create what is called a pipeline. This is
@@ -189,6 +198,8 @@ impl Renderer {
         // Since we need to draw to multiple images, we are going to create a
         // different framebuffer for each image.
         let framebuffers = window_size_dependent_setup(
+            device.clone(),
+            swapchain.format(),
             &images,
             render_pass.clone(),
             &mut dynamic_state
@@ -207,7 +218,6 @@ impl Renderer {
             swapchain,
             images,
             render_pass,
-            vert_buf,
             vs,
             fs,
             pipeline,
@@ -243,6 +253,8 @@ impl Renderer {
         // Because framebuffers contains an Arc on the old swapchain, we need to
         // recreate framebuffers as well.
         self.framebuffers = window_size_dependent_setup(
+            self.device.clone(),
+            self.swapchain.format(),
             &new_images,
             self.render_pass.clone(),
             &mut self.dynamic_state,
@@ -251,7 +263,7 @@ impl Renderer {
         self.recreate_swapchain = false;
     }
 
-    pub fn redraw(&mut self, data: Vec<InstanceData>) {
+    pub fn redraw(&mut self, data: Vec<Vec<InstanceData>>) {
         // It is important to call this function from time to time, otherwise
         // resources will keep accumulating and you will eventually reach an out
         // of memory error.  Calling this function polls various fences in order
@@ -294,7 +306,10 @@ impl Renderer {
         }
 
         // Specify the color to clear the framebuffer with i.e. blue
-        let clear_values = vec![[0.0, 0.0, 0.0, 1.0].into()];
+        let clear_values = vec![
+            [0.0, 0.0, 0.0, 1.0].into(),
+            ClearValue::None,
+        ];
 
         // In order to draw, we have to build a *command buffer*. The command
         // buffer object holds the list of commands that are going to be
@@ -311,6 +326,8 @@ impl Renderer {
             self.device.clone(),
             self.queue.family(),
         ).unwrap();
+
+        let inst = mk_inst_buf(self.device.clone(), data);
 
         builder
             // Before we can draw, we have to *enter a render pass*. There are
@@ -335,7 +352,7 @@ impl Renderer {
             .draw(
                 self.pipeline.clone(),
                 &self.dynamic_state,
-                (self.vert_buf.clone(), mk_inst_buf(self.device.clone(), data)),
+                inst,
                 (),
                 (),
             ).unwrap()
@@ -473,16 +490,23 @@ fn mk_render_pass(device: Arc<Device>, swapchain: Arc<Swapchain<Window>>) ->
         vulkano::single_pass_renderpass!(
             device,
             attachments: {
-                color: {
+                intermediary: {
                     load: Clear,
+                    store: DontCare,
+                    format: swapchain.format(),
+                    samples: 4,
+                },
+                color: {
+                    load: DontCare,
                     store: Store,
                     format: swapchain.format(),
                     samples: 1,
                 }
             },
             pass: {
-                color: [color],
+                color: [intermediary],
                 depth_stencil: {}
+                resolve: [color],
             }
         )
         .unwrap(),
@@ -490,7 +514,7 @@ fn mk_render_pass(device: Arc<Device>, swapchain: Arc<Swapchain<Window>>) ->
 }
 
 type MyPipeline = Arc<GraphicsPipeline<
-    OneVertexOneInstanceDefinition<Vertex, InstanceData>,
+    SingleBufferDefinition<InstVert>,
     Box<dyn PipelineLayoutAbstract + Send + Sync>,
     Arc<dyn RenderPassAbstract + Send + Sync>>
 >;
@@ -507,9 +531,7 @@ fn mk_pipeline(
         // `SingleBufferDefinition` actually contains a template parameter
         // corresponding to the type of each vertex. But in this code it is
         // automatically inferred.
-        .vertex_input(
-            OneVertexOneInstanceDefinition::<Vertex, InstanceData>::new()
-        )
+        .vertex_input_single_buffer()
         // A Vulkan shader can in theory contain multiple entry points, so
         // we have to specify which one. The `main` word of
         // `main_entry_point` actually corresponds to the name of the entry
@@ -535,6 +557,8 @@ fn mk_pipeline(
 /// This method is called once during initialization, then again whenever the
 /// window is resized
 pub fn window_size_dependent_setup(
+    device: Arc<Device>,
+    format: Format,
     images: &[Arc<SwapchainImage<Window>>],
     render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
     dynamic_state: &mut DynamicState,
@@ -548,15 +572,21 @@ pub fn window_size_dependent_setup(
     };
     dynamic_state.viewports = Some(vec![viewport]);
 
+    let intermediary = AttachmentImage::transient_multisampled(
+        device.clone(),
+        dimensions,
+        4,
+        format,
+    ).unwrap();
+
     images
         .iter()
         .map(|image| {
             Arc::new(
                 Framebuffer::start(render_pass.clone())
-                    .add(image.clone())
-                    .unwrap()
-                    .build()
-                    .unwrap(),
+                    .add(intermediary.clone()).unwrap()
+                    .add(image.clone()).unwrap()
+                    .build().unwrap(),
             ) as Arc<dyn FramebufferAbstract + Send + Sync>
         })
         .collect::<Vec<_>>()
